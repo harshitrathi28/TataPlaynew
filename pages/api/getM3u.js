@@ -15,9 +15,9 @@ export default async function handler(req, res) {
 }
 
 
+import { all } from "axios";
 import fetch, { Headers } from "cross-fetch";
 import { replacestrings } from './stringreplace';
-const { filterChannels } = require('./channelfilter');
 // const baseUrl = "https://kong-tatasky.videoready.tv";
 const baseUrl = "https://tm.tapi.videoready.tv";
 
@@ -29,7 +29,7 @@ const getAllChans = async () => {
     let err = null;
     let res = null;
 
-    await fetch("https://ts-api.videoready.tv/content-detail/pub/api/v1/channels?limit=999", requestOptions)
+    await fetch("https://ts-api.videoready.tv/content-detail/pub/api/v1/channels?limit=800", requestOptions)
         .then(response => response.text())
         .then(result => res = JSON.parse(result))
         .then(r => r)
@@ -54,7 +54,7 @@ const getJWT = async (params, uDetails) => {
         'kp': 'false',
         'locale': 'ENG',
         'origin': 'https://watch.tataplay.com',
-        'platform': 'WEB',
+        'platform': 'web',
         'profileid': uDetails.id,
         'referer': 'https://watch.tataplay.com/',
         'sec-fetch-dest': 'empty',
@@ -88,10 +88,6 @@ const getJWT = async (params, uDetails) => {
         // Promise.all(params.epids.map(x => { return { action: "stream", epids: [ {  } ] } }))
         const response = await fetch(baseUrl + "/auth-service/v1/oauth/token-service/token", requestOptions);
         result = await response.json();
-        if (result?.message.toLowerCase().indexOf("API Rate Limit Exceeded".toLowerCase()) > -1)
-            // throw new Error(result.message)
-            // return Promise.reject(new Error(result.message + 'nooooooo'));
-            return { retry: true };
     }
     catch (error) {
         console.log('error: ', error);
@@ -114,7 +110,7 @@ const getUserChanDetails = async (userChannels) => {
     myHeaders.append("device_details", "{\"pl\":\"web\",\"os\":\"Linux\",\"lo\":\"en-us\",\"app\":\"1.36.35\",\"dn\":\"PC\",\"bv\":101,\"bn\":\"CHROME\",\"device_id\":\"b70f9d50a3ea9cc7b77d4f1e04c41706\",\"device_type\":\"WEB\",\"device_platform\":\"PC\",\"device_category\":\"open\",\"manufacturer\":\"Linux_CHROME_101\",\"model\":\"PC\",\"sname\":\"\"}");
     myHeaders.append("locale", "ENG");
     myHeaders.append("origin", "https://watch.tataplay.com");
-    myHeaders.append("platform", "WEB");
+    // myHeaders.append("platform", "web");
     myHeaders.append("referer", "https://watch.tataplay.com/");
     myHeaders.append("sec-fetch-dest", "empty");
     myHeaders.append("sec-fetch-mode", "cors");
@@ -127,93 +123,160 @@ const getUserChanDetails = async (userChannels) => {
         headers: myHeaders
     };
 
-    let err = null;
-    let result = [];
+ let err = null;
+let result = [];
 
-    let chanIds = userChannels.map(x => x.id);
-    let chanIdsStr = '';
+let chanIds = userChannels.map(x => x.id);
+let chanIdsStr = '';
 
-    while (chanIds.length > 0) {
-        chanIdsStr = chanIds.splice(0, 99).join(',');
-        await fetch("https://tm.tapi.videoready.tv/content-detail/pub/api/v1/live-tv-genre/channels?genre=&language=&channelIds=" + chanIdsStr, requestOptions)
-            .then(response => response.json())
-            .then(cData => result.push(...cData.data.liveChannels))
-            .catch(error => {
-                console.log('error: ', error);
-                err = error;
-            });
-    }
+// Fetch HMAC value
+let hmacValue;
 
-    if (result.length > 0)
-        err = null;
+fetch("https://tplayapi.code-crafters.app/321codecrafters/hmac.json")
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        return response.json();
+    })
+    .then(data => {
+        hmacValue = data.data.hmac.hdnea.value;
+    })
+    .catch(error => {
+        console.error('Error fetching and rearranging HMAC data:', error);
+        err = error;
+    });
+// Now hmacValue contains the hdnea value as a string
 
-    let obj = { err };
-    if (err === null)
-        obj.list = result;
-    return obj;
+
+while (chanIds.length > 0) {
+    chanIdsStr = chanIds.splice(0, 999).join(',');
+    await fetch("https://tplayapi.code-crafters.app/321codecrafters/fetcher.json")
+        .then(response => response.json())
+        .then(cData => {
+            // Check if the response has the expected structure
+            if (cData && cData.data && Array.isArray(cData.data.channels)) {
+                // Flatten the array of arrays
+                const flatChannels = cData.data.channels.flat();
+                // Rearrange and push the data into the result array
+               flatChannels.forEach(channel => {
+                let firstGenre = channel.genres && channel.genres.length > 0 ? channel.genres[0] : null;
+                let rearrangedChannel = {
+                    id: channel.id,
+                    name: channel.name,
+                    tvg_id: channel.tvg_id,
+                    group_title: firstGenre,
+                    tvg_logo: channel.logo_url,
+                    stream_url: channel.manifest_url,
+                    license_url: channel.license_url,
+                    stream_headers: channel.manifest_headers ? (channel.manifest_headers['User-Agent'] || JSON.stringify(channel.manifest_headers)) : null,
+                    drm: channel.drm,
+                    is_mpd: channel.is_mpd,
+                    kid_in_mpd: channel.kid_in_mpd,
+                    hmac_required: channel.hmac_required,
+                    key_extracted: channel.key_extracted,
+                    pssh: channel.pssh,
+                    clearkey: channel.clearkeys ? JSON.stringify(channel.clearkeys[0].base64) : null,
+                    hma: hmacValue
+                };
+					
+                    result.push(rearrangedChannel);
+                });
+            } else {
+                console.error('Invalid data structure or channels is not an array:', cData);
+                err = 'Invalid data structure';
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            err = error;
+        });
+}
+
+if (result.length > 0) {
+    err = null;
+}
+
+let obj = { err };
+if (err === null) {
+    obj.list = result;
+}
+return obj;
 }
 
 const generateM3u = async (ud) => {
     let errs = [];
     // let userEnt = theUser.entitlements.map(x => x.pkgId);
-    let ent = ud.ent;
-    let userChans = [];
+
     let allChans = await getAllChans();
-    if (allChans.err === null) {
-        userChans = allChans.list.filter(x => x.entitlements.some(y => ent.includes(y)));
-        //console.log(userChans);
-    }
-    else
+    //console.log(allChans.list.length);
+    if (allChans.err != null)
         errs.push(allChans.err);
     if (errs.length === 0) {
-        let userChanDetails = await getUserChanDetails(userChans);
-        userChanDetails.list = filterChannels(userChanDetails.list);
-        let m3uStr = '';
+        let userChanDetails = await getUserChanDetails(allChans.list);
+
+          let m3uStr = '';
         if (userChanDetails.err === null) {
-            let chansList = userChanDetails.list;
-            //console.log(chansList);
+            let chansList = userChanDetails.list
+            console.log(JSON.stringify(chansList.length));
             let jwtTokens = [];
             if (chansList.length > 0) {
-                m3uStr = '#EXTM3U x-tvg-url="https://www.tsepg.cf/epg.xml.gz"\n\n';
+                //m3uStr = '#EXTM3U    x-tvg-url="http://botallen.live/epg.xml.gz"\n\n';4
+                m3uStr = '#EXTM3U    x-tvg-url="https://raw.githubusercontent.com/mitthu786/tvepg/main/tataplay/epg.xml.gz"\n\n';
+                let chanJwt;
+                let paramsForJwt = {
+                    "action": "stream",
+                    "epids": [
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000000001"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000001523"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000001038"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000001035"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000000033"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000000002"
+                        },
+                        {
+                            "epid": "Subscription",
+                            "bid": "1000000003"
+                         }
+                    ]
+                };
+                console.log(paramsForJwt);
+                chanJwt = await getJWT(paramsForJwt, ud);
+                chanJwt = chanJwt.token;
                 for (let i = 0; i < chansList.length; i++) {
-                    const chanEnts = chansList[i].detail.entitlements.filter(val => ent.includes(val));
-                    if (chanEnts.length > 0) {
-                        let chanJwt = jwtTokens.find(x => x.ents.sort().toString() === chanEnts.sort().toString())?.token;
-                        if (!chanJwt) {
-                            let paramsForJwt = { action: "stream" };
-                            paramsForJwt.epids = chanEnts.map(x => { return { epid: "Subscription", bid: x } });
-                            console.log(paramsForJwt);
-                            chanJwt = await getJWT(paramsForJwt, ud);
-                            while (chanJwt.retry) {
-                                chanJwt = await getJWT(paramsForJwt, ud);
-                            }
-                            chanJwt = chanJwt.token;
-                            jwtTokens.push({
-                                ents: chanEnts,
-                                token: chanJwt
-                            });
-                        }
-                        m3uStr += '#EXTINF:-1  tvg-id=\"' + chansList[i].channelMeta.id.toString() + '\"  ';
-                        //m3uStr += 'tvg-logo=\"' + chansList[i].channelMeta.logo + '\"   ';
-                        m3uStr += 'group-title=\"' + (chansList[i].channelMeta.genre[0] !== "HD" ? chansList[i].channelMeta.genre[0] : chansList[i].channelMeta.genre[1]) + '\",   ' + chansList[i].channelMeta.channelName + '\n';
-                        m3uStr += '#KODIPROP:inputstream.adaptive.license_type=com.widevine.alpha' + '\n';
-                        m3uStr += '#KODIPROP:inputstream.adaptive.license_key=' + chansList[i].detail.dashWidewineLicenseUrl + '&ls_session=';
-                        m3uStr += chanJwt + '\n';
-                        //m3uStr += chansList[i].detail.dashWidewinePlayUrl + '\n\n';
-                        //const playUrl = replacestrings(chansList[i].detail.dashWidewinePlayUrl);
-                        const playUrl = replacestrings(`https://beta-ts-sable.vercel.app/index.mpd?id=${chansList[i].channelMeta.id}`);
-
-                        m3uStr += playUrl + '\n\n';
-
-                    }
-                }
-                console.log('all done!');
+                      m3uStr += '#EXTINF:-1 tvg-id="' + chansList[i].id.toString() + '" ';
+                m3uStr += 'group-title=\"' + (chansList[i].group_title) + '\", tvg-logo=\"https://mediaready.videoready.tv/tatasky-epg/image/fetch/f_auto,fl_lossy,q_auto,h_250,w_250/' + (chansList[i].tvg_logo) + '\", ' + chansList[i].name + '\n';
+                m3uStr += '#KODIPROP:inputstream.adaptive.license_type=clearkey\n';
+                m3uStr += '#KODIPROP:inputstream.adaptive.license_key=' + chansList[i].clearkey + '\n';
+                m3uStr += '#EXTVLCOPT:http-user-agent=' + chansList[i].stream_headers + '\n';
+		m3uStr += '#EXTHTTP:{"cookie":"' + chansList[i].hma + '"}\n';	
+                m3uStr += chansList[i].stream_url + '|cookie:' + chansList[i].hma + '\n\n';
             }
-            else
-                m3uStr = "Could not get channels. Try again later.";
-        }
-        else
-            m3uStr = userChanDetails.err.toString();
-        return m3uStr;
+        console.log('all done!');
+    } else {
+        m3uStr = "Could not get channels. Try again later.";
+    }
+} else {
+    m3uStr = userChanDetails.err ? userChanDetails.err.toString() : "Could not get channels. Try again later.";
+}
+
+return m3uStr;
     }
 }
