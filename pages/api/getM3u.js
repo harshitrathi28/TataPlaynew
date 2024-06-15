@@ -266,6 +266,8 @@ const generateM3u = async (ud) => {
                 m3uStr += '#KODIPROP:inputstream.adaptive.license_type=clearkey\n';
                 m3uStr += '#KODIPROP:inputstream.adaptive.license_key=' + chansList[i].clearkey + '\n';
                 m3uStr += '#EXTVLCOPT:http-user-agent=' + chansList[i].stream_headers + '\n';
+		m3uStr += '#KODIPROP:inputstream.adaptive.license_key=' + chansList[i].detail.dashWidewineLicenseUrl + '&ls_session=';
+                m3uStr += chanJwt + '\n';	
 		m3uStr += '#EXTHTTP:{"cookie":"' + chansList[i].hma + '"}\n';	
                 m3uStr += chansList[i].stream_url + '|cookie:' + chansList[i].hma + '\n\n';
             }
